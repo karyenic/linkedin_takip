@@ -1,0 +1,210 @@
+# Önce uygulamayı durdurun (Ctrl+C)
+# Aşağıdaki kodu linkedin_app.py dosyasına yapıştırın
+
+$updatedCode = @'
+import streamlit as st
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import os
+from pathlib import Path
+
+# Veritabanı işlemleri
+def init_db():
+    try:
+        conn = sqlite3.connect('linkedin_takip.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS adaylar
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      isim TEXT, tarih TEXT, aciklama TEXT,
+                      davet INTEGER, randevu INTEGER, plan INTEGER,
+                      kayit INTEGER, takip INTEGER, hayir INTEGER,
+                      is_ariyor INTEGER)''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Veritabanı hatası: {e}")
+
+def add_candidate(isim, tarih, aciklama, davet, randevu, plan, kayit, takip, hayir, is_ariyor):
+    try:
+        conn = sqlite3.connect('linkedin_takip.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute('''INSERT INTO adaylar (isim, tarih, aciklama, davet, randevu, plan, kayit, takip, hayir, is_ariyor)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)''', 
+                  (isim, tarih, aciklama, int(davet), int(randevu), int(plan), 
+                   int(kayit), int(takip), int(hayir), int(is_ariyor)))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Ekleme hatası: {e}")
+        return False
+
+def get_all_candidates():
+    try:
+        conn = sqlite3.connect('linkedin_takip.db', check_same_thread=False)
+        df = pd.read_sql_query("SELECT * FROM adaylar", conn)
+        conn.close()
+        return df
+    except Exception as e:
+        st.error(f"Veri okuma hatası: {e}")
+        return pd.DataFrame()
+
+# Streamlit arayüzü
+def main():
+    st.set_page_config(page_title="LinkedIn Takip Asistanı", layout="wide")
+    st.title("📊 LinkedIn Takip Asistanı")
+    
+    # Veritabanını başlat
+    init_db()
+    
+    # Sidebar - Yeni aday ekleme
+    with st.sidebar:
+        st.header("Yeni Aday Ekle")
+        isim = st.text_input("İsim*", placeholder="Adayın adı soyadı")
+        tarih = st.text_input("Tarih* (gg aa yy formatında)", datetime.now().strftime("%d %m %y"))
+        aciklama = st.text_area("Açıklama", placeholder="Detaylı açıklama...")
+        
+        # Tarih doğrulama
+        try:
+            datetime.strptime(tarih, "%d %m %y")
+            tarih_gecerli = True
+        except ValueError:
+            st.error("❌ Tarih formatı hatalı! Lütfen 'gg aa yy' formatında girin (örn: 15 09 23)")
+            tarih_gecerli = False
+        
+        st.subheader("Durumlar")
+        col1, col2 = st.columns(2)
+        with col1:
+            davet = st.checkbox("Davet Yapıldı")
+            randevu = st.checkbox("Randevu Oluştu")
+            plan = st.checkbox("Plan Anlatıldı")
+        with col2:
+            kayit = st.checkbox("Kayıt")
+            takip = st.checkbox("Takip")
+            hayir = st.checkbox("Hayır")
+            is_ariyor = st.checkbox("İş Arıyor")
+        
+        if st.button("✅ Aday Ekle", type="primary"):
+            if isim and tarih_gecerli:
+                if add_candidate(isim, tarih, aciklama, davet, randevu, plan, kayit, takip, hayir, is_ariyor):
+                    st.success("✅ Aday başarıyla eklendi!")
+                    st.balloons()
+                else:
+                    st.error("❌ Aday eklenemedi!")
+            else:
+                if not isim:
+                    st.warning("⚠️ Lütfen isim giriniz!")
+    
+    # Ana içerik - Aday listesi
+    st.header("Aday Listesi")
+    df = get_all_candidates()
+    
+    if len(df) > 0:
+        # Filtreleme
+        st.subheader("Filtreleme")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            filtre_davet = st.checkbox("Sadece Davet Yapılanlar")
+            filtre_randevu = st.checkbox("Sadece Randevu Oluşanlar")
+        with col2:
+            filtre_plan = st.checkbox("Sadece Plan Anlatılanlar")
+            filtre_kayit = st.checkbox("Sadece Kayıt Olanlar")
+        with col3:
+            filtre_is_ariyor = st.checkbox("Sadece İş Arayanlar")
+            filtre_takip = st.checkbox("Sadece Takip Edilenler")
+        
+        # Filtreleme işlemi
+        if filtre_davet:
+            df = df[df['davet'] == 1]
+        if filtre_randevu:
+            df = df[df['randevu'] == 1]
+        if filtre_plan:
+            df = df[df['plan'] == 1]
+        if filtre_kayit:
+            df = df[df['kayit'] == 1]
+        if filtre_is_ariyor:
+            df = df[df['is_ariyor'] == 1]
+        if filtre_takip:
+            df = df[df['takip'] == 1]
+        
+        # Gösterim için DataFrame oluştur (✓ ve X için)
+        display_df = df.copy()
+        checkbox_columns = ['davet', 'randevu', 'plan', 'kayit', 'takip', 'hayir', 'is_ariyor']
+        for col in checkbox_columns:
+            display_df[col] = display_df[col].apply(lambda x: '✓' if x == 1 else '✗')
+        
+        # Renkli tablo gösterimi
+        def color_cells(val):
+            if val == '✓':
+                return 'background-color: #90EE90; color: #006400; font-weight: bold;'  # Açık yeşil
+            elif val == '✗':
+                return 'background-color: #FFCCCB; color: #8B0000;'  # Açık kırmızı
+            return ''
+        
+        styled_df = display_df.style.applymap(color_cells, subset=checkbox_columns)
+        st.dataframe(styled_df, use_container_width=True, height=400)
+        
+        # Silme butonu
+        if st.button("🗑️ Tüm Verileri Sil"):
+            try:
+                conn = sqlite3.connect('linkedin_takip.db', check_same_thread=False)
+                c = conn.cursor()
+                c.execute("DELETE FROM adaylar")
+                conn.commit()
+                conn.close()
+                st.success("Tüm veriler silindi!")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Silme hatası: {e}")
+    else:
+        st.info("📝 Henüz hiç aday eklenmemiş. Sol taraftan yeni aday ekleyebilirsiniz.")
+    
+    # Raporlama Paneli
+    st.header("📈 Raporlama Paneli")
+    
+    if len(df) > 0:
+        total_aday = len(df)
+        davet_yapilan = df['davet'].sum()
+        randevu_olusan = df['randevu'].sum()
+        plan_anlatilan = df['plan'].sum()
+        kayit_olan = df['kayit'].sum()
+        takip_edilen = df['takip'].sum()
+        hayir_diyen = df['hayir'].sum()
+        is_ariyor = df['is_ariyor'].sum()
+
+        davet_randevu_oran = (randevu_olusan / davet_yapilan * 100) if davet_yapilan > 0 else 0
+        plan_kayit_oran = (kayit_olan / plan_anlatilan * 100) if plan_anlatilan > 0 else 0
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(label="👥 Toplam Aday", value=total_aday)
+            st.metric(label="👍 Kayıt Olan", value=kayit_olan)
+        with col2:
+            st.metric(label="✉️ Davet Yapılan", value=davet_yapilan)
+            st.metric(label="📞 Randevu Oluşan", value=randevu_olusan)
+        with col3:
+            st.metric(label="🗓️ Plan Anlatılan", value=plan_anlatilan)
+            st.metric(label="➡️ Takip Edilen", value=takip_edilen)
+        with col4:
+            st.metric(label="💼 İş Arıyor", value=is_ariyor)
+            st.metric(label="👎 Hayır Diyen", value=hayir_diyen)
+
+        st.divider()
+        st.subheader("Dönüşüm Oranları")
+        col_oran1, col_oran2 = st.columns(2)
+        with col_oran1:
+            st.metric(label="Davetten Randevuya Dönüşüm Oranı", value=f"{davet_randevu_oran:.1f}%")
+        with col_oran2:
+            st.metric(label="Plan Anlatımından Kayıta Dönüşüm Oranı", value=f"{plan_kayit_oran:.1f}%")
+    else:
+        st.warning("Rapor oluşturmak için henüz veri girilmemiş.")
+
+if __name__ == "__main__":
+    main()
+'@
+
+Set-Content -Path "C:\YEDEK\linkedin\linkedin_app.py" -Value $updatedCode -Encoding UTF8
+
+# Uygulamayı yeniden başlatın
+streamlit run C:\YEDEK\linkedin\linkedin_app.py
